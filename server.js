@@ -7,8 +7,28 @@ const cors        = require('cors');
 const apiRoutes         = require('./routes/api.js');
 const fccTestingRoutes  = require('./routes/fcctesting.js');
 const runner            = require('./test-runner');
-
+const helmet = require('helmet');
 const app = express();
+const mongoose = require('mongoose');
+
+
+// Connect to MongoDB
+mongoose.connect('mongodb://localhost:27017/stockchecker').then(() => {
+  console.log('Connected to MongoDB');
+}).catch(err => {
+  console.error('Error connecting to MongoDB:', err);
+});
+
+// Helmet setup for content security policies
+app.use(helmet({ hidePoweredBy: { setTo: 'PHP 4.2.0' }
+  , frameguard: { action: 'deny' }
+  , noSniff: true
+  , ieNoOpen: true
+ 
+  , dnsPrefetchControl: { allow: false }
+  , noCache: false
+  , contentSecurityPolicy: { directives: { defaultSrc: ["'self'"], scriptSrc: ["'self'"]} }
+  }));
 
 app.use('/public', express.static(process.cwd() + '/public'));
 
