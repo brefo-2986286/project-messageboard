@@ -20,15 +20,10 @@ mongoose.connect('mongodb://localhost:27017/stockchecker').then(() => {
 });
 
 // Helmet setup for content security policies
-app.use(helmet({ hidePoweredBy: { setTo: 'PHP 4.2.0' }
-  , frameguard: { action: 'deny' }
-  , noSniff: true
-  , ieNoOpen: true
- 
-  , dnsPrefetchControl: { allow: false }
-  , noCache: false
-  , contentSecurityPolicy: { directives: { defaultSrc: ["'self'"], scriptSrc: ["'self'"]} }
-  }));
+app.use(helmet.frameguard({ action: 'deny' }));
+app.use(helmet.dnsPrefetchControl());
+app.use(helmet.referrerPolicy({ policy: 'same-origin' }))
+app.use(helmet.frameguard());
 
 app.use('/public', express.static(process.cwd() + '/public'));
 
