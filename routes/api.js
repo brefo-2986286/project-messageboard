@@ -5,207 +5,268 @@ const ThreadModel = require("../models").Thread;
 const ReplyModel = require("../models").Reply;
 
 module.exports = function (app) {
-  app
-    .route("/api/threads/:board")
-    .post((req, res) => {
-      const { text, delete_password } = req.body;
-      let board = req.body.board;
-      if (!board) {
-        board = req.params.board;
-      }
-      console.log("post", req.body);
-      const newThread = new ThreadModel({
-        text: text,
-        delete_password: delete_password,
-        replies: [],
-      });
-      console.log("newThread", newThread);
-      BoardModel.findOne({ name: board }, (err, Boarddata) => {
+  app.route("/api/threads/:board")
+    .post(async (req, res) => {
+      try {
+        const { text, delete_password } = req.body;
+        let board = req.body.board || req.params.board;
+        const now = new Date();
+
+        const newThread = new ThreadModel({
+          text: text,
+          delete_password: delete_password,
+          replies: [],
+          created_on: now,
+          bumped_on: now,
+          reported: false,
+        });
+
+        let Boarddata = await BoardModel.findOne({ name: board }).exec();
         if (!Boarddata) {
           const newBoard = new BoardModel({
             name: board,
-            threads: [],
+            threads: [newThread],
           });
-          console.log("newBoard", newBoard);
-          newBoard.threads.push(newThread);
-          newBoard.save((err, data) => {
-            console.log("newBoardData", data);
-            if (err || !data) {
-              console.log(err);
-              res.send("There was an error saving in post");
-            } else {
-              res.json(newThread);
-            }
-          });
+          await newBoard.save();
+          res.json(newThread);
         } else {
           Boarddata.threads.push(newThread);
-          Boarddata.save((err, data) => {
-            if (err || !data) {
-              res.send("There was an error saving in post");
-            } else {
-              res.json(newThread);
-            }
-          });
+          await Boarddata.save();
+          res.json(newThread);
         }
-      });
+      } catch (err) {
+        console.log(err);
+        res.status(500).json({ error: "There was an error saving the thread" });
+      }
     })
-    .get((req, res) => {
-      const board = req.params.board;
-      BoardModel.findOne({ name: board }, (err, data) => {
+    .get(async (req, res) => {
+      try {
+        const board = req.params.board;
+        let data = await BoardModel.findOne({ name: board }).exec();
         if (!data) {
-          console.log("No board with this name");
-          res.json({ error: "No board with this name" });
+          res.status(404).json({ error: "No board with this name" });
         } else {
-          console.log("data", data);
-          const threads = data.threads.map((thread) => {
-            const {
-              _id,
-              text,
-              created_on,
-              bumped_on,
-              reported,
-              delete_password,
-              replies,
-            } = thread;
-            return {
-              _id,
-              text,
-              created_on,
-              bumped_on,
-              reported,
-              delete_password,
-              replies,
-              replycount: thread.replies.length,
-            };
-          });
+          const threads = data.threads
+            .sort((a, b) => b.bumped_on - a.bumped_on)
+            .slice(0, 10)
+            .map((thread) => {
+              const {
+                _id,
+                text,
+                created_on,
+                bumped_on,
+                replies,
+              } = thread;
+              const sortedReplies = replies
+                .sort((a, b) => b.created_on - a.created_on)
+                .slice(0, 3)
+                .map(reply => ({
+                  _id: reply._id,
+                  text: reply.text,
+                  created_on: reply.created_on,
+                }));
+              return {
+                _id,
+                text,
+                created_on,
+                bumped_on,
+                replies: sortedReplies,
+                replycount: thread.replies.length,
+              };
+            });
           res.json(threads);
         }
-      });
+      } catch (err) {
+        console.log(err);
+        res.status(500).json({ error: "There was an error fetching threads" });
+      }
     })
-    .put((req, res) => {
-      console.log("put", req.body);
-      const { report_id } = req.body;
-      const board = req.params.board;
-      BoardModel.findOne({ name: board }, (err, boardData) => {
+    .put(async (req, res) => {
+      try {
+        const { thread_id } = req.body;
+        const board = req.params.board;
+
+        let boardData = await BoardModel.findOne({ name: board }).exec();
         if (!boardData) {
-          res.json("error", "Board not found");
-        } else {
-          const date = new Date();
-          let reportedThread = boardData.threads.id(report_id);
-          reportedThread.reported = true;
-          reportedThread.bumped_on = date;
-          boardData.save((err, updatedData) => {
-            res.send("Success");
-          });
+          return res.status(404).json({ error: "Board not found" });
         }
-      });
-    })
-    .delete((req, res) => {
-      console.log("delete", req.body);
-      const { thread_id, delete_password } = req.body;
-      const board = req.params.board;
-      BoardModel.findOne({ name: board }, (err, boardData) => {
-        if (!boardData) {
-          res.json("error", "Board not found");
-        } else {
-          let threadToDelete = boardData.threads.id(thread_id);
-          if (threadToDelete.delete_password === delete_password) {
-            threadToDelete.remove();
-          } else {
-            res.send("Incorrect Password");
-            return;
-          }
-          boardData.save((err, updatedData) => {
-            res.send("Success");
-          });
+
+        let threadToReport = boardData.threads.id(thread_id);
+        if (!threadToReport) {
+          return res.status(404).json({ error: "Thread not found" });
         }
-      });
+
+        threadToReport.reported = true;
+        await boardData.save();
+        res.send("reported");
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Error reporting thread" });
+      }
     });
 
-  app
-    .route("/api/replies/:board")
-    .post((req, res) => {
-      console.log("thread", req.body);
-      const { thread_id, text, delete_password } = req.body;
-      const board = req.params.board;
-      const newReply = new ReplyModel({
-        text: text,
-        delete_password: delete_password,
-      });
-      BoardModel.findOne({ name: board }, (err, boardData) => {
+    app.delete('/api/threads/:board', async (req, res) => {
+      try {
+        const { thread_id, delete_password } = req.body;
+        const board = req.params.board;
+    
+        // Check if the board exists
+        const boardData = await BoardModel.findOne({ name: board });
         if (!boardData) {
-          res.json("error", "Board not found");
+          return res.status(404).json({ error: "Board not found" });
+        }
+    
+        // Find the thread to delete
+        let threadToDelete = boardData.threads.id(thread_id);
+        if (!threadToDelete) {
+          return res.status(404).json({ error: "Thread not found" });
+        }
+    
+        // Check delete password
+        if (threadToDelete.delete_password !== delete_password) {
+          return res.status(403).send("incorrect password");
+        }
+    
+        // Remove the thread reference and save changes
+        boardData.threads.pull({ _id: thread_id });
+        await boardData.save();
+    
+        // Adjusted response string to lowercase
+        return res.status(200).send("success"); // Note the lowercase 's'
+    
+      } catch (err) {
+        // Enhanced error handling and logging
+        console.error("Error deleting thread:", err);
+        return res.status(500).json({ error: "Error deleting thread", message: err.message });
+      }
+    });
+  
+  
+
+  app.route("/api/replies/:board")
+    .post(async (req, res) => {
+      try {
+        const { thread_id, text, delete_password } = req.body;
+        const board = req.params.board;
+        const now = new Date();
+        const newReply = new ReplyModel({
+          text: text,
+          delete_password: delete_password,
+          created_on: now,
+          reported: false,
+        });
+
+        let boardData = await BoardModel.findOne({ name: board }).exec();
+        if (!boardData) {
+          res.status(404).json({ error: "Board not found" });
         } else {
-          const date = new Date();
           let threadToAddReply = boardData.threads.id(thread_id);
-          threadToAddReply.bumped_on = date;
-          threadToAddReply.replies.push(newReply);
-          boardData.save((err, updatedData) => {
-            res.json(updatedData);
-          });
-        }
-      });
-    })
-    .get((req, res) => {
-      const board = req.params.board;
-      BoardModel.findOne({ name: board }, (err, data) => {
-        if (!data) {
-          console.log("No board with this name");
-          res.json({ error: "No board with this name" });
-        } else {
-          console.log("data", data);
-          const thread = data.threads.id(req.query.thread_id);
-          res.json(thread);
-        }
-      });
-    })
-    .put((req, res) => {
-      //       thread_id: 60898569e083081d56e290cf
-      //       reply_id: 608986aee083081d56e290d0
-      const { thread_id, reply_id } = req.body;
-      const board = req.params.board;
-      BoardModel.findOne({ name: board }, (err, data) => {
-        if (!data) {
-          console.log("No board with this name");
-          res.json({ error: "No board with this name" });
-        } else {
-          console.log("data", data);
-          let thread = data.threads.id(thread_id);
-          let reply = thread.replies.id(reply_id);
-          reply.reported = true;
-          reply.bumped_on = new Date();
-          data.save((err, updatedData) => {
-            if (!err) {
-              res.send("Success");
-            }
-          });
-        }
-      });
-    })
-    .delete((req, res) => {
-      const { thread_id, reply_id, delete_password } = req.body;
-      console.log("delete reply body", req.body);
-      const board = req.params.board;
-      BoardModel.findOne({ name: board }, (err, data) => {
-        if (!data) {
-          console.log("No board with this name");
-          res.json({ error: "No board with this name" });
-        } else {
-          console.log("data", data);
-          let thread = data.threads.id(thread_id);
-          let reply = thread.replies.id(reply_id);
-          if (reply.delete_password === delete_password) {
-            reply.remove();
+          if (threadToAddReply) {
+            threadToAddReply.bumped_on = now;
+            threadToAddReply.replies.push(newReply);
+            await boardData.save();
+            res.json(threadToAddReply);
           } else {
-            res.send("Incorrect Password");
-            return;
+            res.status(404).json({ error: "Thread not found" });
           }
-          data.save((err, updatedData) => {
-            if (!err) {
-              res.send("Success");
-            }
-          });
         }
-      });
+      } catch (err) {
+        console.log(err);
+        res.status(500).json({ error: "There was an error adding the reply" });
+      }
+    })
+    .get(async (req, res) => {
+      try {
+        const board = req.params.board;
+        let data = await BoardModel.findOne({ name: board }).exec();
+        if (!data) {
+          res.status(404).json({ error: "No board with this name" });
+        } else {
+          const thread = data.threads.id(req.query.thread_id);
+          if (thread) {
+            res.json({
+              _id: thread._id,
+              text: thread.text,
+              created_on: thread.created_on,
+              bumped_on: thread.bumped_on,
+              replies: thread.replies.map(reply => ({
+                _id: reply._id,
+                text: reply.text,
+                created_on: reply.created_on,
+              })),
+            });
+          } else {
+            res.status(404).json({ error: "Thread not found" });
+          }
+        }
+      } catch (err) {
+        console.log(err);
+        res.status(500).json({ error: "There was an error fetching the replies" });
+      }
+    })
+    .put(async (req, res) => {
+      try {
+        const { thread_id, reply_id } = req.body;
+        const board = req.params.board;
+
+        let boardData = await BoardModel.findOne({ name: board }).exec();
+        if (!boardData) {
+          return res.status(404).json({ error: "Board not found" });
+        }
+
+        let thread = boardData.threads.id(thread_id);
+        if (!thread) {
+          return res.status(404).json({ error: "Thread not found" });
+        }
+
+        let reply = thread.replies.id(reply_id);
+        if (!reply) {
+          return res.status(404).json({ error: "Reply not found" });
+        }
+
+        reply.reported = true;
+        await boardData.save();
+        res.send("reported");
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Error reporting reply" });
+      }
+    });
+
+    app.route("/api/replies/:board")
+    .delete(async (req, res) => {
+      try {
+        const { thread_id, reply_id, delete_password } = req.body;
+        const board = req.params.board;
+
+        const boardData = await BoardModel.findOne({ name: board });
+        if (!boardData) {
+          return res.status(404).json({ error: "Board not found" });
+        }
+
+        let thread = boardData.threads.id(thread_id);
+        if (!thread) {
+          return res.status(404).json({ error: "Thread not found" });
+        }
+
+        let replyToDelete = thread.replies.id(reply_id);
+        if (!replyToDelete) {
+          return res.status(404).json({ error: "Reply not found" });
+        }
+
+        if (replyToDelete.delete_password !== delete_password) {
+          return res.status(403).send("incorrect password");
+        }
+
+        replyToDelete.text = "[deleted]";
+        await boardData.save();
+
+        res.status(200).send("success");
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Error deleting reply" });
+      }
     });
 };
+  
+

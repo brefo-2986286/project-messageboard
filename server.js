@@ -13,11 +13,7 @@ const mongoose = require('mongoose');
 
 
 // Connect to MongoDB
-mongoose.connect('mongodb://localhost:27017/stockchecker').then(() => {
-  console.log('Connected to MongoDB');
-}).catch(err => {
-  console.error('Error connecting to MongoDB:', err);
-});
+require("./db-connection"); // This is the file that connects to the database. You should require it in server.js.
 
 // Helmet setup for content security policies
 app.use(helmet.frameguard({ action: 'deny' }));
